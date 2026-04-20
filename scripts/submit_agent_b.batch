@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# Soccer Twos Agent B (Compact Observation) - SLURM Job Script for PACE
+# PPO with compact kinematic observations, sparse reward (no PBRS)
+# Author: Your name
+# Date: 2026-04-20
+
+# INSTRUCTIONS:
+# 1. Replace YOUR_GT_USERNAME with your actual GT username
+# 2. Adjust --ntasks-per-node, --mem-per-cpu, -t as needed
+# 3. Set --mail-user to your email for notifications
+# 4. Submit with: sbatch scripts/submit_agent_b.batch
+
+#SBATCH --job-name=AgentB_CompactObs
+#SBATCH -N1 --ntasks-per-node=6
+#SBATCH --mem-per-cpu=8G
+#SBATCH -t06:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --output=logs/agent_b-%j.out
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=YOUR_GT_USERNAME@gatech.edu
+
+mkdir -p logs
+
+source /home/himi/miniforge3/etc/profile.d/conda.sh
+conda activate soccertwos
+
+cd /home/himi/bin/deep-football
+
+echo "=== Agent B Compact Observation Training Start ===" 
+echo "Node: $(hostname)"
+echo "GPU available: $(nvidia-smi -L 2>/dev/null || echo 'None')"
+echo "Start time: $(date)"
+
+# Run Agent B compact observation training
+/home/himi/miniforge3/envs/soccertwos/bin/python train_agent_b_compact_obs.py \
+    --timesteps 5000000 \
+    --num-workers 6 \
+    --num-envs-per-worker 3 \
+    --lr 3e-4 \
+    --gamma 0.99 \
+    --gae-lambda 0.95 \
+    --clip-param 0.2 \
+    --entropy-coeff 0.01 \
+    --local-dir ./ray_results \
+    --experiment-name AgentB_CompactObs \
+    --position-scale 20.0 \
+    --velocity-scale 10.0 \
+    --distance-scale 30.0
+
+echo "=== Agent B Compact Observation Training Complete ===" 
+echo "End time: $(date)"
