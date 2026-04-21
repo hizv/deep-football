@@ -16,7 +16,12 @@
 #SBATCH --mail-user=gburbell3@gatech.edu
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate soccerstwos
+module load anaconda3
+
+cd /home/hice1/nparikh44/cs-8803-drl/deep-football
+conda activate soccertwos
+
+echo pwd
 
 # Run the training script
 python example_ray_ppo_sp_still.py
