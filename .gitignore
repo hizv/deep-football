@@ -3,6 +3,8 @@ ray_results/
 ceia_baseline_agent/
 data/
 *.out
+.vscode/
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

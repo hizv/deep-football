@@ -1,9 +1,13 @@
 from random import uniform as randfloat
+import logging
 
 import gym
 import numpy as np
 from ray.rllib import MultiAgentEnv
 import soccer_twos
+
+
+logger = logging.getLogger(__name__)
 
 
 class RLLibWrapper(gym.core.Wrapper, MultiAgentEnv):
@@ -12,6 +16,144 @@ class RLLibWrapper(gym.core.Wrapper, MultiAgentEnv):
     """
 
     pass
+
+
+class PotentialBasedRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
+    """
+    Potential-based reward shaping wrapper.
+
+    Uses Phi(s) = -distance(ball, opponent_goal) and adds:
+        shaping = gamma * Phi(s') - Phi(s)
+    """
+
+    DEFAULT_AGENT_IDS = (0, 1, 2, 3)
+
+    def __init__(self, env, config=None):
+        super().__init__(env)
+        config = config or {}
+
+        self.agent_ids = tuple(config.get("agent_ids", self.DEFAULT_AGENT_IDS))
+        self.pbrs_gamma = float(config.get("pbrs_gamma", 0.99))
+        self.pbrs_scale = float(config.get("pbrs_scale", 1.0))
+        self.pbrs_alpha = float(config.get("pbrs_alpha", 1.0))
+
+        goal_x = float(config.get("goal_x", 16.0))
+        self.left_goal = np.asarray([-goal_x, 0.0], dtype=np.float32)
+        self.right_goal = np.asarray([goal_x, 0.0], dtype=np.float32)
+
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
+        self._prev_potential = None
+
+    @staticmethod
+    def _to_xy(value):
+        if value is None:
+            return np.zeros(2, dtype=np.float32)
+        arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        if arr.size >= 2:
+            return arr[:2]
+        if arr.size == 1:
+            return np.asarray([arr[0], 0.0], dtype=np.float32)
+        return np.zeros(2, dtype=np.float32)
+
+    def _extract_ball_pos(self, infos):
+        if isinstance(infos, dict):
+            values = infos.values()
+        elif isinstance(infos, (list, tuple)):
+            values = infos
+        else:
+            values = []
+
+        for agent_info in values:
+            if not isinstance(agent_info, dict):
+                continue
+            for key in ("ball_info", "ball_state", "ball"):
+                ball_info = agent_info.get(key)
+                if not isinstance(ball_info, dict):
+                    continue
+                if "position" in ball_info:
+                    return self._to_xy(ball_info.get("position")), True
+
+        return np.zeros(2, dtype=np.float32), False
+
+    def _opponent_goal(self, agent_id):
+        half = max(1, len(self.agent_ids) // 2)
+        team_a = self.agent_ids[:half]
+        if agent_id in team_a:
+            return self.right_goal
+        return self.left_goal
+
+    def _compute_potential(self, agent_id, ball_pos):
+        opp_goal = self._opponent_goal(agent_id)
+        dist_ball_goal = float(np.linalg.norm(ball_pos - opp_goal))
+        return -self.pbrs_alpha * dist_ball_goal
+
+    def _shape_rewards_dict(self, rewards, ball_pos):
+        shaped = {}
+        current = {}
+        for agent_id, reward in rewards.items():
+            if agent_id == "__all__":
+                shaped[agent_id] = reward
+                continue
+
+            curr = self._compute_potential(agent_id, ball_pos)
+            current[agent_id] = curr
+
+            if self._prev_potential is None:
+                shaped[agent_id] = float(reward)
+                continue
+
+            prev = self._prev_potential.get(agent_id, curr)
+            shaped[agent_id] = float(reward) + self.pbrs_scale * (
+                self.pbrs_gamma * curr - prev
+            )
+
+        self._prev_potential = current
+        return shaped
+
+    def _shape_rewards_array(self, rewards, ball_pos):
+        rewards_arr = np.asarray(rewards, dtype=np.float32)
+        shaped_arr = rewards_arr.copy()
+
+        current = {}
+        for idx in range(rewards_arr.shape[0]):
+            agent_id = self.agent_ids[idx] if idx < len(self.agent_ids) else idx
+            curr = self._compute_potential(agent_id, ball_pos)
+            current[agent_id] = curr
+            if self._prev_potential is None:
+                continue
+            prev = self._prev_potential.get(agent_id, curr)
+            shaped_arr[idx] = float(rewards_arr[idx]) + self.pbrs_scale * (
+                self.pbrs_gamma * curr - prev
+            )
+
+        self._prev_potential = current
+        if isinstance(rewards, tuple):
+            return tuple(float(v) for v in shaped_arr.tolist())
+        if isinstance(rewards, list):
+            return [float(v) for v in shaped_arr.tolist()]
+        return shaped_arr
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        self._prev_potential = None
+        return obs
+
+    def step(self, action):
+        obs, rewards, dones, infos = self.env.step(action)
+
+        ball_pos, has_ball = self._extract_ball_pos(infos)
+        if not has_ball:
+            return obs, rewards, dones, infos
+
+        if isinstance(rewards, dict):
+            shaped_rewards = self._shape_rewards_dict(rewards, ball_pos)
+        elif isinstance(rewards, (list, tuple, np.ndarray)):
+            shaped_rewards = self._shape_rewards_array(rewards, ball_pos)
+        else:
+            shaped_rewards = rewards
+
+        return obs, shaped_rewards, dones, infos
 
 
 class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
@@ -34,7 +176,6 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
         self.use_pbrs = bool(config.get("use_pbrs", False))
 
         self.pbrs_alpha = float(config.get("pbrs_alpha", 1.0))
-        self.pbrs_beta = float(config.get("pbrs_beta", 0.3))
         self.pbrs_gamma = float(config.get("pbrs_gamma", 0.99))
         self.pbrs_scale = float(config.get("pbrs_scale", 1.0))
 
@@ -74,7 +215,7 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
             self.observation_space = local_obs_space
 
         self.action_space = env.action_space
-        self._prev_potential = {agent_id: 0.0 for agent_id in self.agent_ids}
+        self._prev_potential = None
 
     def _coerce_obs_dict(self, observations):
         if isinstance(observations, dict):
@@ -307,12 +448,8 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
                 continue
 
             _, _, _, opp_goal = self._teammate_and_opponents(agent_id)
-            dist_ball_goal = np.linalg.norm(ball_pos - opp_goal)
-            dist_agent_ball = np.linalg.norm(state["pos"] - ball_pos)
-            potential[agent_id] = (
-                self.pbrs_alpha / (1.0 + dist_ball_goal)
-                + self.pbrs_beta / (1.0 + dist_agent_ball)
-            )
+            dist_ball_goal = float(np.linalg.norm(ball_pos - opp_goal))
+            potential[agent_id] = -self.pbrs_alpha * dist_ball_goal
         return potential
 
     def _shape_rewards(self, rewards, player_states, ball_pos):
@@ -320,6 +457,10 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
             return rewards
 
         current_potential = self._compute_potential(player_states, ball_pos)
+        if self._prev_potential is None:
+            self._prev_potential = current_potential
+            return rewards
+
         shaped_rewards = {}
         for agent_id, reward in rewards.items():
             if agent_id == "__all__":
@@ -342,7 +483,7 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
         )
 
         global_state = self._build_global_state(compact_obs, ball_pos, ball_vel)
-        self._prev_potential = self._compute_potential(player_states, ball_pos)
+        self._prev_potential = None
         return self._format_observation(compact_obs, global_state)
 
     def step(self, action):
@@ -376,6 +517,8 @@ def create_rllib_env(env_config: dict = {}):
 
     env_config = dict(env_config)
     use_compact_obs = bool(env_config.pop("use_compact_obs", False))
+    port_retry_attempts = int(env_config.pop("port_retry_attempts", 8))
+    worker_id_retry_stride = int(env_config.pop("worker_id_retry_stride", 100))
     wrapper_config = {
         "agent_ids": env_config.pop("agent_ids", CompactObservationRewardWrapper.DEFAULT_AGENT_IDS),
         "return_dict_obs": bool(env_config.pop("return_dict_obs", False)),
@@ -393,13 +536,50 @@ def create_rllib_env(env_config: dict = {}):
         "goal_x": float(env_config.pop("goal_x", 16.0)),
     }
 
-    env = soccer_twos.make(**env_config)
+    base_worker_id = int(env_config.get("worker_id", 0))
 
-    if use_compact_obs or wrapper_config["use_pbrs"]:
+    env = None
+    selected_env_config = dict(env_config)
+    last_retry_error = None
+    for retry_idx in range(max(0, port_retry_attempts) + 1):
+        trial_env_config = dict(env_config)
+        trial_env_config["worker_id"] = base_worker_id + (
+            retry_idx * worker_id_retry_stride
+        )
+        try:
+            env = soccer_twos.make(**trial_env_config)
+            selected_env_config = trial_env_config
+            break
+        except Exception as err:
+            err_msg = str(err).lower()
+            is_port_collision = (
+                "address already in use" in err_msg
+                or "worker number" in err_msg and "still in use" in err_msg
+                or "socket communication" in err_msg and "in use" in err_msg
+            )
+            if not is_port_collision:
+                raise
+
+            last_retry_error = err
+            if retry_idx >= port_retry_attempts:
+                raise
+
+            logger.warning(
+                "Unity worker port collision for worker_id=%s; retrying with worker_id=%s",
+                trial_env_config["worker_id"],
+                base_worker_id + ((retry_idx + 1) * worker_id_retry_stride),
+            )
+
+    if env is None and last_retry_error is not None:
+        raise last_retry_error
+
+    if use_compact_obs:
         return CompactObservationRewardWrapper(env, wrapper_config)
+    if wrapper_config["use_pbrs"]:
+        return PotentialBasedRewardWrapper(env, wrapper_config)
 
     # env = TransitionRecorderWrapper(env)
-    if "multiagent" in env_config and not env_config["multiagent"]:
+    if "multiagent" in selected_env_config and not selected_env_config["multiagent"]:
         # is multiagent by default, is only disabled if explicitly set to False
         return env
     return RLLibWrapper(env)

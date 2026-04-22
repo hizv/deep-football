@@ -5,6 +5,7 @@ import yaml
 from ray import tune
 from ray.rllib.agents.callbacks import DefaultCallbacks
 from ray.rllib.models import ModelCatalog
+from ray.tune.registry import RLLIB_MODEL, _global_registry
 from soccer_twos import EnvType
 
 from mappo_model import MAPPOCentralCriticModel
@@ -39,6 +40,23 @@ def parse_args():
     parser.add_argument("--position-scale", type=float, default=20.0)
     parser.add_argument("--velocity-scale", type=float, default=10.0)
     parser.add_argument("--distance-scale", type=float, default=30.0)
+    parser.add_argument(
+        "--enable-dashboard",
+        action="store_true",
+        help="Enable Ray dashboard (disabled by default for cluster stability).",
+    )
+    parser.add_argument(
+        "--dashboard-host",
+        type=str,
+        default="127.0.0.1",
+        help="Dashboard bind host when --enable-dashboard is used.",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8265,
+        help="Dashboard bind port when --enable-dashboard is used.",
+    )
     return parser.parse_args()
 
 
@@ -155,13 +173,29 @@ def policy_mapping_fn(agent_id, episode=None, worker=None, **kwargs):
     return np.random.choice(candidate_policies, p=candidate_probs)
 
 
+def register_model_safely(model_name, model_class):
+    """
+    Register model class while handling older Ray versions that require tf.keras.
+    """
+    try:
+        ModelCatalog.register_custom_model(model_name, model_class)
+    except AttributeError as err:
+        if "keras" not in str(err):
+            raise
+        _global_registry.register(RLLIB_MODEL, model_name, model_class)
+
+
 if __name__ == "__main__":
     args = parse_args()
     tasks = load_curriculum(args.curriculum)
 
-    ray.init()
+    ray.init(
+        include_dashboard=args.enable_dashboard,
+        dashboard_host=args.dashboard_host,
+        dashboard_port=args.dashboard_port,
+    )
     tune.registry.register_env("Soccer", create_rllib_env)
-    ModelCatalog.register_custom_model("mappo_central_critic", MAPPOCentralCriticModel)
+    register_model_safely("mappo_central_critic", MAPPOCentralCriticModel)
 
     env_config = {
         "variation": EnvType.multiagent_player,
