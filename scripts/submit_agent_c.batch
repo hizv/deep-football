@@ -13,9 +13,8 @@
 # 5. For quick validation: set --timesteps 500000 and --num-workers 4
 
 #SBATCH --job-name=soccerstwos
-#SBATCH -N1 --ntasks-per-node=6
+#SBATCH -N1 --ntasks-per-node=8
 #SBATCH --mem-per-cpu=6G
-# SBATCH --gres=gpu:1
 #SBATCH -t12:00:00
 #SBATCH --output=logs/soccerstwos-%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -37,6 +36,8 @@ cd /home/hice1/nparikh44/cs-8803-drl/deep-football
 echo "=== Agent C MAPPO Full Stack Training Start ===" 
 echo "Nodes: $(echo $SLURM_NODELIST | tr ',' '\n' | head -5)"
 echo "GPU available: $(nvidia-smi -L 2>/dev/null || echo 'None')"
+BASE_PORT=$((20000 + (SLURM_JOB_ID % 20000)))
+echo "Unity base port: ${BASE_PORT}"
 echo "Start time: $(date)"
 
 # Run Agent C MAPPO training with curriculum and self-play
@@ -47,6 +48,7 @@ python train_agent_c_mappo.py \
     --num-envs-per-worker 3 \
     --lr 3e-4 \
     --gamma 0.99 \
+    --base-port ${BASE_PORT} \
     --gae-lambda 0.95 \
     --clip-param 0.2 \
     --entropy-coeff 0.01 \
@@ -61,7 +63,10 @@ python train_agent_c_mappo.py \
     --pbrs-scale 1.0 \
     --position-scale 20.0 \
     --velocity-scale 10.0 \
-    --distance-scale 30.0
+    --distance-scale 30.0 \
+    --checkpoint-freq 10 \
+    --keep-checkpoints-num 5 \
+    --max-failures 5 \
 
 echo "=== Agent C MAPPO Full Stack Training Complete ===" 
 echo "End time: $(date)"

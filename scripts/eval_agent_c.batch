@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Soccer Twos Agent C - SLURM Evaluation Script
+# Evaluates Agent C against Random and Baseline agents
+# Date: 2026-04-22
+
+#SBATCH --job-name=eval_soccer
+#SBATCH -N1 --ntasks-per-node=8
+#SBATCH --mem-per-cpu=6G
+#SBATCH -t01:00:00
+#SBATCH --output=logs/eval_soccer-%j.out
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=nparikh44@gatech.edu
+
+set -euo pipefail
+
+mkdir -p logs
+
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+else
+    module load anaconda3
+fi
+conda activate soccertwos
+
+cd /home/hice1/nparikh44/cs-8803-drl/deep-football
+
+echo "=== Agent C Evaluation Start ===" 
+echo "Nodes: $(echo $SLURM_NODELIST | tr ',' '\n' | head -5)"
+echo "Start time: $(date)"
+
+# Generate base ports bound to the SLURM job ID to prevent Unity port collisions
+BASE_PORT_1=$((15000 + (SLURM_JOB_ID % 40000)))
+BASE_PORT_2=$((BASE_PORT_1 + 100))
+
+echo "--------------------------------------------------------"
+echo "1. Evaluating Agent C against Random Agent (10 matches)"
+echo "--------------------------------------------------------"
+python eval_metrics.py \
+    --opponent random \
+    --matches 10 \
+    --checkpoint "./ray_results/AgentC_MAPPO/PPO_Soccer_1b873_00000_0_2026-04-22_10-03-58/checkpoint_000380/checkpoint-380"
+
+echo ""
+echo "--------------------------------------------------------"
+echo "2. Evaluating Agent C against Baseline Agent (10 matches)"
+echo "--------------------------------------------------------"
+python eval_metrics.py \
+    --opponent baseline \
+    --matches 10 \
+    --checkpoint "./ray_results/AgentC_MAPPO/PPO_Soccer_1b873_00000_0_2026-04-22_10-03-58/checkpoint_000380/checkpoint-380"
+    
+echo "=== Agent C Evaluation Complete ==="  
+echo "End time: $(date)"

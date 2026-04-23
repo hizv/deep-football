@@ -1,4 +1,5 @@
 import argparse
+import os
 import numpy as np
 import ray
 import yaml
@@ -10,6 +11,14 @@ from soccer_twos import EnvType
 
 from mappo_model import MAPPOCentralCriticModel
 from utils import create_rllib_env, sample_player, sample_pos_vel
+
+
+def default_base_port():
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    if slurm_job_id is not None and slurm_job_id.isdigit():
+        # Keep each job on a separate port range to avoid cross-job collisions.
+        return 20000 + (int(slurm_job_id) % 20000)
+    return 50039
 
 
 def parse_args():
@@ -40,6 +49,17 @@ def parse_args():
     parser.add_argument("--position-scale", type=float, default=20.0)
     parser.add_argument("--velocity-scale", type=float, default=10.0)
     parser.add_argument("--distance-scale", type=float, default=30.0)
+    parser.add_argument("--checkpoint-freq", type=int, default=10)
+    parser.add_argument("--keep-checkpoints-num", type=int, default=5)
+    parser.add_argument("--max-failures", type=int, default=5)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing experiment state/checkpoints when available.",
+    )
+    parser.add_argument("--base-port", type=int, default=default_base_port())
+    parser.add_argument("--port-retry-attempts", type=int, default=8)
+    parser.add_argument("--worker-id-retry-stride", type=int, default=100)
     parser.add_argument(
         "--enable-dashboard",
         action="store_true",
@@ -199,10 +219,13 @@ if __name__ == "__main__":
 
     env_config = {
         "variation": EnvType.multiagent_player,
+        "base_port": args.base_port,
         "num_envs_per_worker": args.num_envs_per_worker,
         "use_compact_obs": True,
         "return_dict_obs": True,
         "use_pbrs": True,
+        "port_retry_attempts": args.port_retry_attempts,
+        "worker_id_retry_stride": args.worker_id_retry_stride,
         "pbrs_alpha": args.pbrs_alpha,
         "pbrs_beta": args.pbrs_beta,
         "pbrs_gamma": args.gamma,
@@ -227,6 +250,10 @@ if __name__ == "__main__":
     stop_config = {"timesteps_total": args.timesteps}
     if args.time_limit_s > 0:
         stop_config["time_total_s"] = args.time_limit_s
+
+    run_kwargs = {}
+    if args.resume:
+        run_kwargs["resume"] = "ERRORED_ONLY"
 
     analysis = tune.run(
         "PPO",
@@ -270,9 +297,12 @@ if __name__ == "__main__":
             },
         },
         stop=stop_config,
-        checkpoint_freq=50,
+        max_failures=args.max_failures,
+        checkpoint_freq=args.checkpoint_freq,
+        keep_checkpoints_num=args.keep_checkpoints_num,
         checkpoint_at_end=True,
         local_dir=args.local_dir,
+        **run_kwargs,
     )
 
     best_trial = analysis.get_best_trial("episode_reward_mean", mode="max")
