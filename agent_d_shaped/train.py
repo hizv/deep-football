@@ -15,6 +15,7 @@ import sys
 import gym
 import ray
 from ray import tune
+from ray.rllib.agents.callbacks import DefaultCallbacks
 from ray.rllib import MultiAgentEnv
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +36,11 @@ from reward_wrapper import GoalAwarePBRSWrapper  # noqa: E402
 
 class _RLlibMultiAgentEnv(gym.core.Wrapper, MultiAgentEnv):
     """Lets RLlib treat the base soccer_twos env as a MultiAgentEnv."""
+
+
+class _RayCompatCallbacks(DefaultCallbacks):
+    def on_algorithm_init(self, *, algorithm, **kwargs):
+        apply_unity_compat()
 
 
 def build_env(env_config=None):
@@ -130,6 +136,7 @@ if __name__ == "__main__":
             "num_envs_per_worker": args.num_envs_per_worker,
             "framework": "torch",
             "log_level": "INFO",
+            "callbacks": _RayCompatCallbacks,
             # PPO — standard defaults with a slightly larger batch for the
             # multiagent rollout density.
             "lr": args.lr,
