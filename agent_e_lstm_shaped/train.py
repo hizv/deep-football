@@ -28,13 +28,20 @@ import sys
 
 import gym
 import ray
-import soccer_twos
 from ray import tune
 from ray.rllib import MultiAgentEnv
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-if _THIS_DIR not in sys.path:
-    sys.path.insert(0, _THIS_DIR)
+_REPO_ROOT = os.path.dirname(_THIS_DIR)
+for _path in (_THIS_DIR, _REPO_ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from unity_compat import apply_unity_compat  # noqa: E402
+
+apply_unity_compat()
+
+import soccer_twos  # noqa: E402
 
 from reward_wrapper import GoalAwarePBRSWrapper  # noqa: E402
 
@@ -44,14 +51,21 @@ class _RLlibMultiAgentEnv(gym.core.Wrapper, MultiAgentEnv):
 
 
 def build_env(env_config=None):
-    env_config = dict(env_config or {})
-    if hasattr(env_config, "worker_index"):
+    apply_unity_compat()
+
+    raw_env_config = env_config or {}
+    worker_index = getattr(raw_env_config, "worker_index", None)
+    vector_index = getattr(raw_env_config, "vector_index", 0)
+
+    env_config = dict(raw_env_config)
+    if worker_index is not None:
         env_config["worker_id"] = (
-            env_config.worker_index * env_config.get("num_envs_per_worker", 1)
-            + env_config.vector_index
+            worker_index * env_config.get("num_envs_per_worker", 1)
+            + vector_index
         )
-    base_env = soccer_twos.make(**env_config)
+
     pbrs_gamma = float(env_config.pop("pbrs_gamma", 0.99))
+    base_env = soccer_twos.make(**env_config)
     return GoalAwarePBRSWrapper(
         _RLlibMultiAgentEnv(base_env),
         pbrs_gamma=pbrs_gamma,
