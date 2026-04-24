@@ -25,6 +25,7 @@ class AgentC(AgentInterface):
             "use_compact_obs": True,
             "return_dict_obs": True,
             "use_pbrs": False,
+            "base_port": 16000 + (os.getpid() % 10000), # use an isolated port
         }
 
         # Get observation and action spaces

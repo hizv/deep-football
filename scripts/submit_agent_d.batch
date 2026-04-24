@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Soccer Twos Agent D (Vanilla PPO + Dense Shaping) - SLURM Job Script for PACE
+# Huge Neural Network, Independent PPO, Deep Reward Shaping, Self-Play Archive
+# Date: 2026-04-23
+
+# INSTRUCTIONS:
+# 1. Adjust --ntasks-per-node, --mem-per-cpu, -t as needed (longer for more timesteps)
+# 2. Set --mail-user to your email for notifications
+# 3. Submit with: sbatch scripts/submit_agent_d.batch
+
+#SBATCH --job-name=soccerstwos
+#SBATCH -N1 --ntasks-per-node=24
+#SBATCH --mem-per-cpu=6G
+#SBATCH -t12:00:00
+#SBATCH --output=logs/soccerstwos-%j.out
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=nparikh44@gatech.edu
+
+set -euo pipefail
+
+mkdir -p logs
+
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+else
+    module load anaconda3
+fi
+conda activate soccertwos
+
+cd /home/hice1/nparikh44/cs-8803-drl/deep-football
+
+echo "=== Agent D Vanilla PPO Training Start ===" 
+echo "Nodes: $(echo $SLURM_NODELIST | tr ',' '\n' | head -5)"
+echo "GPU available: $(nvidia-smi -L 2>/dev/null || echo 'None')"
+BASE_PORT=$((20000 + (SLURM_JOB_ID % 20000)))
+echo "Unity base port: ${BASE_PORT}"
+echo "Start time: $(date)"
+
+# Run Agent D Vanilla PPO training
+# Using more workers here since it's a brute force method
+python train_agent_d_vanilla_ppo.py \
+    --timesteps 60000000 \
+    --num-workers 14 \
+    --num-envs-per-worker 2 \
+    --base-port ${BASE_PORT} \
+    --experiment-name PPO_Vanilla_HugeNet
+
+echo "=== Agent D Vanilla PPO Training Complete ===" 
+echo "End time: $(date)"

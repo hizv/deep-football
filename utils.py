@@ -447,17 +447,30 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
                 potential[agent_id] = 0.0
                 continue
 
-            _, _, _, opp_goal = self._teammate_and_opponents(agent_id)
+            _, _, own_goal, opp_goal = self._teammate_and_opponents(agent_id)
+            
+            # Primary structural objective: Ball closeness to opponent goal
+            # We invert it so closer = higher positive potential
             dist_ball_goal = float(np.linalg.norm(ball_pos - opp_goal))
-            potential[agent_id] = -self.pbrs_alpha * dist_ball_goal
+            max_possible_dist = 32.0 # Approximate width of the field
+            progress_potential = max_possible_dist - dist_ball_goal
+            
+            # Territory incentive: Add a boost if the ball is in their half
+            dist_own_goal = float(np.linalg.norm(ball_pos - own_goal))
+            territory_pts = 5.0 if dist_ball_goal < dist_own_goal else 0.0
+
+            # New Phi: Strictly positive. Increases as ball gets closer to enemy goal.
+            phi = (self.pbrs_alpha * progress_potential) + territory_pts
+            potential[agent_id] = phi
+            
         return potential
 
-    def _shape_rewards(self, rewards, player_states, ball_pos):
+    def _shape_rewards(self, rewards, player_states, ball_pos, ball_vel):
         if not self.use_pbrs or not isinstance(rewards, dict):
             return rewards
 
         current_potential = self._compute_potential(player_states, ball_pos)
-        if self._prev_potential is None:
+        if getattr(self, "_prev_potential", None) is None:
             self._prev_potential = current_potential
             return rewards
 
@@ -466,11 +479,18 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
             if agent_id == "__all__":
                 shaped_rewards[agent_id] = reward
                 continue
+            
             prev = self._prev_potential.get(agent_id, 0.0)
             curr = current_potential.get(agent_id, 0.0)
-            shaped_rewards[agent_id] = float(reward) + self.pbrs_scale * (
-                self.pbrs_gamma * curr - prev
-            )
+            
+            # Pure PBRS calculation without the artificial concede penalty
+            pbrs_bonus = self.pbrs_gamma * curr - prev
+            
+            shaping = self.pbrs_scale * pbrs_bonus
+
+            # Keep the clipping to prevent value function explosions
+            shaping_clipped = max(-0.25, min(0.25, shaping))
+            shaped_rewards[agent_id] = float(reward) + shaping_clipped
 
         self._prev_potential = current_potential
         return shaped_rewards
@@ -484,6 +504,7 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
 
         global_state = self._build_global_state(compact_obs, ball_pos, ball_vel)
         self._prev_potential = None
+        self._prev_ball_pos = ball_pos
         return self._format_observation(compact_obs, global_state)
 
     def step(self, action):
@@ -495,7 +516,7 @@ class CompactObservationRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
         )
         global_state = self._build_global_state(compact_obs, ball_pos, ball_vel)
         shaped_obs = self._format_observation(compact_obs, global_state)
-        shaped_rewards = self._shape_rewards(rewards, player_states, ball_pos)
+        shaped_rewards = self._shape_rewards(rewards, player_states, ball_pos, ball_vel)
 
         return shaped_obs, shaped_rewards, dones, infos
 

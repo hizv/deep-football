@@ -39,7 +39,7 @@ echo "--------------------------------------------------------"
 python eval_metrics.py \
     --opponent random \
     --matches 10 \
-    --checkpoint "./ray_results/AgentC_MAPPO/PPO_Soccer_1b873_00000_0_2026-04-22_10-03-58/checkpoint_000380/checkpoint-380"
+    --checkpoint "./ray_results/AgentC_MAPPO_HardCurriculum/PPO_Soccer_8ebb8_00000_0_2026-04-23_01-52-05/checkpoint_001250/checkpoint-1250"
 
 echo ""
 echo "--------------------------------------------------------"
@@ -48,7 +48,7 @@ echo "--------------------------------------------------------"
 python eval_metrics.py \
     --opponent baseline \
     --matches 10 \
-    --checkpoint "./ray_results/AgentC_MAPPO/PPO_Soccer_1b873_00000_0_2026-04-22_10-03-58/checkpoint_000380/checkpoint-380"
+    --checkpoint "./ray_results/AgentC_MAPPO_HardCurriculum/PPO_Soccer_8ebb8_00000_0_2026-04-23_01-52-05/checkpoint_001250/checkpoint-1250"
     
 echo "=== Agent C Evaluation Complete ==="  
 echo "End time: $(date)"
