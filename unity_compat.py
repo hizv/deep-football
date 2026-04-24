@@ -6,6 +6,7 @@ from mlagents_envs import environment as _mla_env
 
 _TIMEOUT_PATCH_ATTR = "_deep_football_timeout_patched"
 _RLLIB_PATCH_ATTR = "_deep_football_rllib_numpy_patched"
+_CLOSE_PATCH_ATTR = "_deep_football_close_patched"
 
 
 def apply_unity_compat(timeout_wait: int = 300) -> None:
@@ -38,10 +39,31 @@ def apply_unity_compat(timeout_wait: int = 300) -> None:
 
     unity_env_init = _mla_env.UnityEnvironment.__init__
     if getattr(unity_env_init, _TIMEOUT_PATCH_ATTR, False):
+        unity_env_close = _mla_env.UnityEnvironment._close
+    else:
+        def _patched_unity_env_init(self, *args, timeout_wait=timeout_wait, **kwargs):
+            return unity_env_init(self, *args, timeout_wait=timeout_wait, **kwargs)
+
+        setattr(_patched_unity_env_init, _TIMEOUT_PATCH_ATTR, True)
+        _mla_env.UnityEnvironment.__init__ = _patched_unity_env_init
+        unity_env_close = _mla_env.UnityEnvironment._close
+
+    if getattr(unity_env_close, _CLOSE_PATCH_ATTR, False):
         return
 
-    def _patched_unity_env_init(self, *args, timeout_wait=timeout_wait, **kwargs):
-        return unity_env_init(self, *args, timeout_wait=timeout_wait, **kwargs)
+    def _patched_unity_env_close(self, timeout=None):
+        if not hasattr(self, "_communicator"):
+            self._loaded = False
+            process = getattr(self, "_process", None)
+            if process is not None:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                self._process = None
+            return
 
-    setattr(_patched_unity_env_init, _TIMEOUT_PATCH_ATTR, True)
-    _mla_env.UnityEnvironment.__init__ = _patched_unity_env_init
+        return unity_env_close(self, timeout=timeout)
+
+    setattr(_patched_unity_env_close, _CLOSE_PATCH_ATTR, True)
+    _mla_env.UnityEnvironment._close = _patched_unity_env_close
