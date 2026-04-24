@@ -9,7 +9,7 @@ from utils import create_rllib_env
 NUM_ENVS_PER_WORKER = 2
 TRAINING_HOURS = int(os.environ.get("STRONG_TRAIN_HOURS", "12")) # Reduced time since it learns faster
 TIMESTEP_TARGET = int(os.environ.get("STRONG_TRAIN_TIMESTEPS", "20000000"))
-RESTORE_CHECKPOINT = os.environ.get("STRONG_RESTORE_CHECKPOINT")
+RESTORE_CHECKPOINT = "./ray_results/PPO_Beat_Random/PPO_Soccer_922e5_00000_0_2026-04-23_22-09-06/snapshot_250/checkpoint-250"
 DEFAULT_BASE_PORT = 15000 + (int(os.environ.get("SLURM_JOB_ID", "0")) % 40000)
 BASE_PORT = int(os.environ.get("STRONG_BASE_PORT", str(DEFAULT_BASE_PORT)))
 
@@ -77,7 +77,10 @@ if __name__ == "__main__":
         "timesteps_total": TIMESTEP_TARGET,
     }
     if not RESTORE_CHECKPOINT:
+        print(f"Starting fresh training for {TRAINING_HOURS} hours or {TIMESTEP_TARGET} timesteps (whichever comes first).")
         stop_config["time_total_s"] = TRAINING_HOURS * 3600
+    else:
+        print(f"Restoring from checkpoint: {RESTORE_CHECKPOINT}")
 
     analysis = tune.run(
         "PPO",

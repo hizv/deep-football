@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=soccer_phase1
-#SBATCH -N 2
-#SBATCH --ntasks-per-node=8
+#SBATCH -N 1
+#SBATCH --ntasks-per-node=16
 #SBATCH --mem-per-cpu=2G
 #SBATCH -t 12:00:00
 #SBATCH --output=logs/soccer_phase1-%j.out
@@ -23,7 +23,7 @@ mkdir -p logs
 # Environment variables read by the Python script
 export STRONG_TRAIN_HOURS=12
 export STRONG_TRAIN_TIMESTEPS=20000000
-export RESTORE_CHECKPOINT="./ray_results/PPO_Beat_Random/PPO_Soccer_922e5_00000_0_2026-04-23_22-09-06/snapshot_250/checkpoint-250"
+export STRONG_RESTORE_CHECKPOINT="./ray_results/PPO_Beat_Random/PPO_Soccer_922e5_00000_0_2026-04-23_22-09-06/snapshot_250/checkpoint-250"
 
 # Execute the training script
 python train_against_random.py
