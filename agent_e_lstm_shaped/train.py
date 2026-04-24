@@ -61,6 +61,7 @@ def build_env(env_config=None):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timesteps", type=int, default=8_000_000)
+    parser.add_argument("--time-total-s", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=6)
     parser.add_argument("--num-envs-per-worker", type=int, default=3)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -70,6 +71,8 @@ def parse_args():
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument("--lstm-cell-size", type=int, default=256)
     parser.add_argument("--max-seq-len", type=int, default=20)
+    parser.add_argument("--checkpoint-freq", type=int, default=25)
+    parser.add_argument("--keep-checkpoints-num", type=int, default=5)
     parser.add_argument("--local-dir", type=str, default=os.path.join(_THIS_DIR, "ray_results"))
     parser.add_argument("--experiment-name", type=str, default="AgentE_LSTM_GoalAwarePBRS")
     return parser.parse_args()
@@ -82,6 +85,10 @@ def policy_mapping_fn(*_args, **_kwargs):
 if __name__ == "__main__":
     args = parse_args()
     ray.init()
+
+    available_gpus = int(ray.cluster_resources().get("GPU", 0))
+    trainer_gpus = 1 if available_gpus > 0 else 0
+    print(f"Ray detected {available_gpus} GPU(s). Using num_gpus={trainer_gpus}.")
 
     tune.registry.register_env("SoccerPBRS", build_env)
 
@@ -99,11 +106,15 @@ if __name__ == "__main__":
     # pack cleanly during SGD.
     sgd_minibatch_size = max(args.max_seq_len * 10, 200)
 
+    stop_criteria = {"timesteps_total": args.timesteps}
+    if args.time_total_s > 0:
+        stop_criteria["time_total_s"] = args.time_total_s
+
     analysis = tune.run(
         "PPO",
         name=args.experiment_name,
         config={
-            "num_gpus": int(ray.cluster_resources().get("GPU", 0) > 0),
+            "num_gpus": trainer_gpus,
             "num_workers": args.num_workers,
             "num_envs_per_worker": args.num_envs_per_worker,
             "framework": "torch",
@@ -140,14 +151,17 @@ if __name__ == "__main__":
                 "policies_to_train": ["default"],
             },
         },
-        stop={"timesteps_total": args.timesteps},
-        checkpoint_freq=25,
+        stop=stop_criteria,
+        checkpoint_freq=args.checkpoint_freq,
         checkpoint_at_end=True,
-        keep_checkpoints_num=5,
+        keep_checkpoints_num=args.keep_checkpoints_num,
         local_dir=args.local_dir,
     )
 
     best_trial = analysis.get_best_trial("episode_reward_mean", mode="max")
     if best_trial is not None:
-        print(analysis.get_best_checkpoint(best_trial, "episode_reward_mean", "max"))
+        best_checkpoint = analysis.get_best_checkpoint(
+            trial=best_trial, metric="episode_reward_mean", mode="max"
+        )
+        print(f"Best checkpoint: {best_checkpoint}")
     print("Done training agent_e_lstm_shaped")
