@@ -1,63 +1,77 @@
-"""Train agent_e_lstm_shaped: PPO with LSTM trunk + ray-based reward shaping.
+"""Train agent_e_lstm_shaped: PPO + LSTM on goal-aware PBRS shaping.
 
-Same reward wrapper as agent_d_shaped; difference is the policy network. LSTM
-gives the policy memory across timesteps, which helps because:
-  * The ray observation is egocentric and can lose sight of the ball for
-    several frames during contests. Memory of "where was the ball going last
-    tick" lets the agent keep pursuing it.
-  * Kicks / possessions are multi-step events — the LSTM can learn a short
-    trajectory prior rather than reacting purely to the current frame.
+Same shaping as agent_d_shaped; the model grows an LSTM trunk so the policy
+can integrate information across timesteps.
 
-Gamma is bumped to 0.995 to avoid discounting sparse goal rewards too harshly
-over the longer horizons an LSTM can plan across.
+Motivation for the LSTM:
+  * The ray observation is egocentric and can briefly lose sight of the ball
+    (occlusion by opponents, ball behind the agent). A recurrent state lets
+    the policy remember "where the ball was going" for a few ticks rather
+    than having to re-acquire from scratch.
+  * Kicks and passes span multiple frames. An LSTM can learn a short
+    trajectory prior (e.g., "ball is drifting toward me — prepare to strike")
+    that a feedforward net cannot represent at all.
+
+Hyperparameter adjustments relative to the FCNet variant:
+  - lr lowered to 1e-4. LSTMs are higher-variance to gradient updates than
+    FCNets; conservative lr reduces the risk of representational collapse in
+    the recurrent state.
+  - rollout_fragment_length set to 200 (equal to max_seq_len) so every
+    collected chunk is a clean BPTT window.
+  - sgd_minibatch_size is an integer multiple of max_seq_len so minibatches
+    pack cleanly when SGD iterates.
 """
 
 import argparse
 import os
 import sys
 
+import gym
 import ray
+import soccer_twos
 from ray import tune
 from ray.rllib import MultiAgentEnv
-import gym
-import soccer_twos
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
-from reward_wrapper import RayBasedRewardWrapper  # noqa: E402
+from reward_wrapper import GoalAwarePBRSWrapper  # noqa: E402
 
 
-class RLLibWrapper(gym.core.Wrapper, MultiAgentEnv):
+class _RLlibMultiAgentEnv(gym.core.Wrapper, MultiAgentEnv):
     pass
 
 
-def create_env(env_config=None):
+def build_env(env_config=None):
     env_config = dict(env_config or {})
     if hasattr(env_config, "worker_index"):
         env_config["worker_id"] = (
             env_config.worker_index * env_config.get("num_envs_per_worker", 1)
             + env_config.vector_index
         )
-    env = soccer_twos.make(**env_config)
-    return RayBasedRewardWrapper(RLLibWrapper(env))
+    base_env = soccer_twos.make(**env_config)
+    pbrs_gamma = float(env_config.pop("pbrs_gamma", 0.99))
+    return GoalAwarePBRSWrapper(
+        _RLlibMultiAgentEnv(base_env),
+        pbrs_gamma=pbrs_gamma,
+    )
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="agent_e_lstm_shaped training")
-    parser.add_argument("--timesteps", type=int, default=10_000_000)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--timesteps", type=int, default=8_000_000)
     parser.add_argument("--num-workers", type=int, default=6)
     parser.add_argument("--num-envs-per-worker", type=int, default=3)
-    parser.add_argument("--lr", type=float, default=5e-5)
-    parser.add_argument("--gamma", type=float, default=0.995)
-    parser.add_argument("--gae-lambda", type=float, default=0.9)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-param", type=float, default=0.2)
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument("--lstm-cell-size", type=int, default=256)
-    parser.add_argument("--max-seq-len", type=int, default=50)
+    parser.add_argument("--max-seq-len", type=int, default=20)
     parser.add_argument("--local-dir", type=str, default=os.path.join(_THIS_DIR, "ray_results"))
-    parser.add_argument("--experiment-name", type=str, default="AgentE_LSTM_Shaped")
+    parser.add_argument("--experiment-name", type=str, default="AgentE_LSTM_GoalAwarePBRS")
     return parser.parse_args()
 
 
@@ -69,12 +83,21 @@ if __name__ == "__main__":
     args = parse_args()
     ray.init()
 
-    tune.registry.register_env("SoccerShaped", create_env)
+    tune.registry.register_env("SoccerPBRS", build_env)
 
-    temp_env = create_env({"num_envs_per_worker": args.num_envs_per_worker})
-    obs_space = temp_env.observation_space
-    act_space = temp_env.action_space
-    temp_env.close()
+    probe_env = build_env(
+        {
+            "num_envs_per_worker": args.num_envs_per_worker,
+            "pbrs_gamma": args.gamma,
+        }
+    )
+    obs_space = probe_env.observation_space
+    act_space = probe_env.action_space
+    probe_env.close()
+
+    # Keep sgd_minibatch_size a multiple of max_seq_len so LSTM BPTT windows
+    # pack cleanly during SGD.
+    sgd_minibatch_size = max(args.max_seq_len * 10, 200)
 
     analysis = tune.run(
         "PPO",
@@ -91,13 +114,16 @@ if __name__ == "__main__":
             "clip_param": args.clip_param,
             "entropy_coeff": args.entropy_coeff,
             "vf_loss_coeff": 0.5,
-            "rollout_fragment_length": 1000,
-            "train_batch_size": 12000,
-            "sgd_minibatch_size": 1024,
-            "num_sgd_iter": 5,
+            "rollout_fragment_length": args.max_seq_len,
+            "train_batch_size": 8000,
+            "sgd_minibatch_size": sgd_minibatch_size,
+            "num_sgd_iter": 10,
             "batch_mode": "truncate_episodes",
-            "env": "SoccerShaped",
-            "env_config": {"num_envs_per_worker": args.num_envs_per_worker},
+            "env": "SoccerPBRS",
+            "env_config": {
+                "num_envs_per_worker": args.num_envs_per_worker,
+                "pbrs_gamma": args.gamma,
+            },
             "model": {
                 "use_lstm": True,
                 "lstm_cell_size": args.lstm_cell_size,

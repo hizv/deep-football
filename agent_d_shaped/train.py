@@ -1,58 +1,61 @@
-"""Train agent_d_shaped: PPO + dense ray-based reward shaping.
+"""Train agent_d_shaped: PPO with goal-aware PBRS shaping (FCNet policy).
 
-Single shared PPO policy across all 4 agents (one network, applied to both
-teams). This gives stable training without the overhead of archived self-play:
-every step, all 4 agents produce on-policy experience for the same network.
+One shared PPO policy applied to all four agents. Each env step produces
+4x on-policy experience for the same network, which is sample-efficient and
+sidesteps the stability headaches of archived self-play.
 
-Dense rewards come from the ray-based wrapper (proximity / progress /
-possession / kick / spread). No goal-info or ball-info fields required —
-everything is computed from the raw 42x8 ray observation.
+All continuous shaping is provided by GoalAwarePBRSWrapper; see reward_wrapper.py
+for the design rationale.
 """
 
 import argparse
 import os
 import sys
 
+import gym
 import ray
+import soccer_twos
 from ray import tune
 from ray.rllib import MultiAgentEnv
-import gym
-import soccer_twos
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
-from reward_wrapper import RayBasedRewardWrapper  # noqa: E402
+from reward_wrapper import GoalAwarePBRSWrapper  # noqa: E402
 
 
-class RLLibWrapper(gym.core.Wrapper, MultiAgentEnv):
-    pass
+class _RLlibMultiAgentEnv(gym.core.Wrapper, MultiAgentEnv):
+    """Lets RLlib treat the base soccer_twos env as a MultiAgentEnv."""
 
 
-def create_env(env_config=None):
+def build_env(env_config=None):
     env_config = dict(env_config or {})
     if hasattr(env_config, "worker_index"):
         env_config["worker_id"] = (
             env_config.worker_index * env_config.get("num_envs_per_worker", 1)
             + env_config.vector_index
         )
-    env = soccer_twos.make(**env_config)
-    return RayBasedRewardWrapper(RLLibWrapper(env))
+    base_env = soccer_twos.make(**env_config)
+    pbrs_gamma = float(env_config.pop("pbrs_gamma", 0.99))
+    return GoalAwarePBRSWrapper(
+        _RLlibMultiAgentEnv(base_env),
+        pbrs_gamma=pbrs_gamma,
+    )
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="agent_d_shaped training")
-    parser.add_argument("--timesteps", type=int, default=10_000_000)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--timesteps", type=int, default=8_000_000)
     parser.add_argument("--num-workers", type=int, default=6)
     parser.add_argument("--num-envs-per-worker", type=int, default=3)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--gamma", type=float, default=0.995)
+    parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-param", type=float, default=0.2)
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument("--local-dir", type=str, default=os.path.join(_THIS_DIR, "ray_results"))
-    parser.add_argument("--experiment-name", type=str, default="AgentD_Shaped")
+    parser.add_argument("--experiment-name", type=str, default="AgentD_GoalAwarePBRS")
     return parser.parse_args()
 
 
@@ -64,12 +67,17 @@ if __name__ == "__main__":
     args = parse_args()
     ray.init()
 
-    tune.registry.register_env("SoccerShaped", create_env)
+    tune.registry.register_env("SoccerPBRS", build_env)
 
-    temp_env = create_env({"num_envs_per_worker": args.num_envs_per_worker})
-    obs_space = temp_env.observation_space
-    act_space = temp_env.action_space
-    temp_env.close()
+    probe_env = build_env(
+        {
+            "num_envs_per_worker": args.num_envs_per_worker,
+            "pbrs_gamma": args.gamma,
+        }
+    )
+    obs_space = probe_env.observation_space
+    act_space = probe_env.action_space
+    probe_env.close()
 
     analysis = tune.run(
         "PPO",
@@ -80,6 +88,8 @@ if __name__ == "__main__":
             "num_envs_per_worker": args.num_envs_per_worker,
             "framework": "torch",
             "log_level": "INFO",
+            # PPO — standard defaults with a slightly larger batch for the
+            # multiagent rollout density.
             "lr": args.lr,
             "gamma": args.gamma,
             "lambda": args.gae_lambda,
@@ -87,12 +97,15 @@ if __name__ == "__main__":
             "entropy_coeff": args.entropy_coeff,
             "vf_loss_coeff": 0.5,
             "rollout_fragment_length": 500,
-            "train_batch_size": 12000,
-            "sgd_minibatch_size": 2048,
+            "train_batch_size": 8000,
+            "sgd_minibatch_size": 512,
             "num_sgd_iter": 10,
             "batch_mode": "truncate_episodes",
-            "env": "SoccerShaped",
-            "env_config": {"num_envs_per_worker": args.num_envs_per_worker},
+            "env": "SoccerPBRS",
+            "env_config": {
+                "num_envs_per_worker": args.num_envs_per_worker,
+                "pbrs_gamma": args.gamma,
+            },
             "model": {
                 "vf_share_layers": True,
                 "fcnet_hiddens": [256, 256],

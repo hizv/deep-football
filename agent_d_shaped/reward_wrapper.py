@@ -1,116 +1,163 @@
-"""Ray-based dense reward shaping for soccer_twos.
+"""Goal-aware potential-based reward shaping for soccer_twos.
 
-Adapted from DRL-soccer-playing/A_SHOURIK_AGENT/reward_wrapper.py and
-DRL-soccer-playing/MY_AGENT/my_utils.py. Uses only the raw 336-dim ray
-observations (42 rays x 8 channels) so it works without info-dict fields.
+Design principle: the only form of state-dependent reward shaping that is
+guaranteed to preserve the optimal policy of the original MDP is
+potential-based shaping (Ng, Harada, Russell 1999):
 
-Per-step shaping on top of the sparse goal reward:
-  1. proximity  — closer to ball = more reward (saturating).
-  2. progress   — reward when agent's ball distance drops vs last step.
-  3. possession — bonus to the agent on each team closest to the ball.
-  4. kick       — larger bonus when an agent was touching the ball and
-                  it then flew away (dist jumped by > KICK_ESCAPE_MIN).
-  5. spread     — bonus when teammate is far, discouraging ball-clumping.
+    F(s, s') = gamma * Phi(s') - Phi(s)
+
+We therefore put every continuous shaping signal inside a single scalar
+potential Phi, then let the PBRS telescoping structure induce the per-step
+reward. Only genuinely event-like signals (a discrete kick) are added outside
+the potential.
+
+Potential (per agent i, derived only from that agent's raw 42x8 ray cast):
+
+    Phi_i(s) = -alpha * d_ball(i)  -  beta * d_opp_goal(i)
+
+  - d_ball(i)     : agent-i's min ray-distance to the ball (1.0 when unseen)
+  - d_opp_goal(i) : agent-i's min ray-distance to the opposing goal
+  - alpha dominates (default 1.0). beta is smaller (default 0.3) — enough to
+    encourage upfield positioning without overriding ball pursuit.
+
+Why couple to the opponent goal? A ball-only potential pulls both team-mates
+to the ball. Adding -beta * d_opp_goal gives the off-ball agent a gradient
+toward the opponent's half, implicitly producing spread (no ad-hoc threshold
+needed) and creating passing lanes.
+
+Event term: kick_bonus(i).  PBRS on Phi = -d_ball has an unwanted side
+effect — when an agent kicks the ball, d_ball jumps up, so Phi drops, so
+gamma*Phi(s') - Phi(s) is negative. Without a counter-signal the agent is
+trained to stay glued to the ball and never kick it away. The kick_bonus is a
+small direct reward gated on a genuine kick event (agent was touching the
+ball, ball is now away):
+
+    kick_bonus(i) = base + extra * max(0, 1 - d_opp_goal(i))
+
+The extra term makes the bonus direction-aware: a kick taken near the
+opponent goal (a probable shot) is worth more than one taken near the agent's
+own half (a clearance). This exploits information available from the rays
+(seeing the opponent goal) without needing ball-velocity geometry.
 """
+
+from typing import Dict
 
 import gym
 import numpy as np
 from ray.rllib import MultiAgentEnv
 
 
-RAY_SIZE = 8
-NUM_RAYS = 42
-BALL_TAG_IDX = 0
-BLUE_AGENT_TAG_IDX = 3
-PURPLE_AGENT_TAG_IDX = 4
-DIST_IDX = 7
+# Ray channel layout per the soccer_twos RayPerceptionSensor:
+#   [ball, blue_goal, purple_goal, blue_agent, purple_agent, wall, has_hit, distance]
+_RAY_WIDTH = 8
+_NUM_RAYS = 42
+_CH_BALL = 0
+_CH_BLUE_GOAL = 1
+_CH_PURPLE_GOAL = 2
+_CH_DIST = 7
 
-KICK_THRESHOLD = 0.15
-KICK_ESCAPE_MIN = 0.10
-SPREAD_THRESHOLD = 0.55
+# Contact detection (kick events)
+_CONTACT_RADIUS = 0.15
+_KICK_GAP = 0.10
 
 
-class RayBasedRewardWrapper(gym.core.Wrapper, MultiAgentEnv):
+def _opp_goal_channel(agent_id: int) -> int:
+    # Blue team = agent ids 0, 1 (attacks purple goal).
+    # Purple team = agent ids 2, 3 (attacks blue goal).
+    return _CH_PURPLE_GOAL if agent_id < 2 else _CH_BLUE_GOAL
+
+
+def _closest_tagged_ray(obs: np.ndarray, tag_channel: int) -> float:
+    """Minimum normalized distance across the 42 rays where tag_channel fires."""
+    closest = 1.0
+    for ray in range(_NUM_RAYS):
+        offset = ray * _RAY_WIDTH
+        if obs[offset + tag_channel] > 0.5:
+            d = float(obs[offset + _CH_DIST])
+            if d < closest:
+                closest = d
+    return closest
+
+
+class GoalAwarePBRSWrapper(gym.core.Wrapper, MultiAgentEnv):
+    """Per-agent PBRS with a direction-aware kick event bonus.
+
+    Hyperparameters that matter:
+      - potential_scale : overall magnitude of the PBRS term. Keep small
+        (default 0.01) so PBRS adds dense gradient without drowning the
+        sparse +/-1 goal signal.
+      - pbrs_gamma      : gamma used *inside* PBRS. Should match the PPO
+        discount factor for policy-invariance to hold exactly.
+    """
+
     def __init__(
         self,
         env,
-        ball_proximity_weight: float = 0.005,
-        ball_progress_weight: float = 0.01,
-        possession_weight: float = 0.002,
-        kick_weight: float = 0.05,
-        spread_weight: float = 0.003,
+        alpha: float = 1.0,
+        beta: float = 0.3,
+        pbrs_gamma: float = 0.99,
+        potential_scale: float = 0.01,
+        kick_base: float = 0.04,
+        kick_goal_bonus: float = 0.06,
     ):
         super().__init__(env)
-        self.ball_proximity_weight = ball_proximity_weight
-        self.ball_progress_weight = ball_progress_weight
-        self.possession_weight = possession_weight
-        self.kick_weight = kick_weight
-        self.spread_weight = spread_weight
-        self._prev_ball_dist: dict = {}
+        self.alpha = alpha
+        self.beta = beta
+        self.pbrs_gamma = pbrs_gamma
+        self.potential_scale = potential_scale
+        self.kick_base = kick_base
+        self.kick_goal_bonus = kick_goal_bonus
+
+        self._last_phi: Dict[int, float] = {}
+        self._last_d_ball: Dict[int, float] = {}
 
         self.observation_space = env.observation_space
         self.action_space = env.action_space
 
-    def _min_tag_dist(self, obs: np.ndarray, tag_idx: int) -> float:
-        min_dist = 1.0
-        for i in range(NUM_RAYS):
-            base = i * RAY_SIZE
-            if obs[base + tag_idx] > 0.5:
-                d = float(obs[base + DIST_IDX])
-                if d < min_dist:
-                    min_dist = d
-        return min_dist
+    def _compute_phi(self, agent_obs: np.ndarray, agent_id: int):
+        d_ball = _closest_tagged_ray(agent_obs, _CH_BALL)
+        d_opp_goal = _closest_tagged_ray(agent_obs, _opp_goal_channel(agent_id))
+        phi = -self.alpha * d_ball - self.beta * d_opp_goal
+        return phi, d_ball, d_opp_goal
 
-    def _min_ball_dist(self, obs: np.ndarray) -> float:
-        return self._min_tag_dist(obs, BALL_TAG_IDX)
+    def _augment_rewards(
+        self,
+        obs: Dict[int, np.ndarray],
+        base_rewards: Dict[int, float],
+    ) -> Dict[int, float]:
+        augmented = {}
+        for agent_id, agent_obs in obs.items():
+            phi_now, d_ball_now, d_opp_goal_now = self._compute_phi(agent_obs, agent_id)
 
-    def _teammate_dist(self, obs: np.ndarray, agent_id: int) -> float:
-        tag = BLUE_AGENT_TAG_IDX if agent_id < 2 else PURPLE_AGENT_TAG_IDX
-        return self._min_tag_dist(obs, tag)
+            pbrs_term = 0.0
+            if agent_id in self._last_phi:
+                phi_prev = self._last_phi[agent_id]
+                pbrs_term = self.potential_scale * (
+                    self.pbrs_gamma * phi_now - phi_prev
+                )
+            self._last_phi[agent_id] = phi_now
 
-    def _shape(self, obs: dict, base_rewards: dict) -> dict:
-        ball_dists = {aid: self._min_ball_dist(o) for aid, o in obs.items()}
+            kick_term = 0.0
+            d_ball_prev = self._last_d_ball.get(agent_id, 1.0)
+            was_touching = d_ball_prev < _CONTACT_RADIUS
+            ball_escaped = (d_ball_now - d_ball_prev) > _KICK_GAP
+            if was_touching and ball_escaped:
+                proximity_to_opp = max(0.0, 1.0 - d_opp_goal_now)
+                kick_term = self.kick_base + self.kick_goal_bonus * proximity_to_opp
+            self._last_d_ball[agent_id] = d_ball_now
 
-        team_ids = [
-            [aid for aid in ball_dists if aid < 2],
-            [aid for aid in ball_dists if aid >= 2],
-        ]
-        closest = {}
-        for team in team_ids:
-            if team:
-                closest[min(team, key=lambda a: ball_dists[a])] = True
-
-        shaped = {}
-        for aid, agent_obs in obs.items():
-            dist = ball_dists[aid]
-            bonus = 0.0
-
-            bonus += self.ball_proximity_weight * max(0.0, 1.0 - dist)
-
-            prev = self._prev_ball_dist.get(aid, 1.0)
-            bonus += self.ball_progress_weight * (prev - dist)
-            self._prev_ball_dist[aid] = dist
-
-            if aid in closest:
-                bonus += self.possession_weight
-
-            if prev < KICK_THRESHOLD and (dist - prev) > KICK_ESCAPE_MIN:
-                bonus += self.kick_weight
-
-            teammate_dist = self._teammate_dist(agent_obs, aid)
-            if teammate_dist > SPREAD_THRESHOLD:
-                bonus += self.spread_weight
-
-            shaped[aid] = float(base_rewards.get(aid, 0.0)) + bonus
-
-        return shaped
+            augmented[agent_id] = (
+                float(base_rewards.get(agent_id, 0.0)) + pbrs_term + kick_term
+            )
+        return augmented
 
     def reset(self, **kwargs):
-        self._prev_ball_dist = {}
+        self._last_phi.clear()
+        self._last_d_ball.clear()
         return self.env.reset(**kwargs)
 
-    def step(self, actions):
-        obs, rewards, dones, infos = self.env.step(actions)
+    def step(self, action):
+        obs, rewards, dones, infos = self.env.step(action)
         if isinstance(rewards, dict) and isinstance(obs, dict):
-            rewards = self._shape(obs, rewards)
+            rewards = self._augment_rewards(obs, rewards)
         return obs, rewards, dones, infos
