@@ -38,6 +38,7 @@ for _path in (_THIS_DIR, _REPO_ROOT):
         sys.path.insert(0, _path)
 
 from unity_compat import apply_unity_compat  # noqa: E402
+from unity_ports import find_free_base_port  # noqa: E402
 
 apply_unity_compat()
 
@@ -83,6 +84,7 @@ def parse_args():
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-param", type=float, default=0.2)
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
+    parser.add_argument("--base-port", type=int, default=50039)
     parser.add_argument("--lstm-cell-size", type=int, default=256)
     parser.add_argument("--max-seq-len", type=int, default=20)
     parser.add_argument("--checkpoint-freq", type=int, default=25)
@@ -96,6 +98,12 @@ def policy_mapping_fn(*_args, **_kwargs):
     return "default"
 
 
+def _trainer_port_span(num_workers: int, num_envs_per_worker: int) -> int:
+    # Reserve a whole contiguous block for the local worker, all remote workers,
+    # and one extra slot for the temporary probe env used to read spaces.
+    return (num_workers + 1) * num_envs_per_worker + 1
+
+
 if __name__ == "__main__":
     args = parse_args()
     ray.init()
@@ -106,10 +114,19 @@ if __name__ == "__main__":
 
     tune.registry.register_env("SoccerPBRS", build_env)
 
+    reserved_ports = _trainer_port_span(args.num_workers, args.num_envs_per_worker)
+    base_port = find_free_base_port(args.base_port, reserved_ports)
+    probe_worker_id = reserved_ports - 1
+    print(
+        f"Using Unity base_port={base_port} with {reserved_ports} reserved worker slots."
+    )
+
     probe_env = build_env(
         {
             "num_envs_per_worker": args.num_envs_per_worker,
             "pbrs_gamma": args.gamma,
+            "base_port": base_port,
+            "worker_id": probe_worker_id,
         }
     )
     obs_space = probe_env.observation_space
@@ -148,6 +165,7 @@ if __name__ == "__main__":
             "env_config": {
                 "num_envs_per_worker": args.num_envs_per_worker,
                 "pbrs_gamma": args.gamma,
+                "base_port": base_port,
             },
             "model": {
                 "use_lstm": True,
