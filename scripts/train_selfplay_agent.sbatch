@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=soccer_speedrun_Selfplay
+#SBATCH --job-name=soccer_speedrun_selfplay
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=8
 #SBATCH --mem-per-cpu=2G
 #SBATCH -t 12:00:00
-#SBATCH --output=logs/soccer_speedrun_Selfplay-%j.out
+#SBATCH --output=logs/soccer_speedrun_selfplay-%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=nparikh44@gatech.edu
 
