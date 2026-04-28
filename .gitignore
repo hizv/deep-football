@@ -1,6 +1,6 @@
 envs/
-ray_results/
-ceia_baseline_agent/
+#ray_results/
+#ceia_baseline_agent/
 data/
 *.out
 
