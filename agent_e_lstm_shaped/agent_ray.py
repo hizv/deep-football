@@ -1,7 +1,7 @@
 """Eval-time loader for agent_e_lstm_shaped.
 
 Carries per-player LSTM hidden state across act() calls so the recurrent
-policy sees a consistent trajectory, as in DRL-soccer-playing/MY_AGENT.
+policy sees a consistent trajectory.
 """
 
 import glob

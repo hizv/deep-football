@@ -1,0 +1,50 @@
+{
+  "batch_mode": "truncate_episodes",
+  "callbacks": "<class '__main__._RayCompatCallbacks'>",
+  "clip_param": 0.2,
+  "entropy_coeff": 0.01,
+  "env": "SoccerPBRS",
+  "env_config": {
+    "base_port": 50039,
+    "num_envs_per_worker": 3,
+    "pbrs_gamma": 0.99
+  },
+  "framework": "torch",
+  "gamma": 0.99,
+  "lambda": 0.95,
+  "log_level": "INFO",
+  "lr": 0.0001,
+  "model": {
+    "fcnet_activation": "relu",
+    "fcnet_hiddens": [
+      256,
+      256
+    ],
+    "lstm_cell_size": 256,
+    "max_seq_len": 20,
+    "use_lstm": true,
+    "vf_share_layers": true
+  },
+  "multiagent": {
+    "policies": {
+      "default": [
+        null,
+        "Box([-inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf\n -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf], [inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf inf\n inf inf inf inf inf inf inf inf inf inf inf inf], (336,), float32)",
+        "MultiDiscrete([3 3 3])",
+        {}
+      ]
+    },
+    "policies_to_train": [
+      "default"
+    ],
+    "policy_mapping_fn": "<function policy_mapping_fn at 0x1554a291d280>"
+  },
+  "num_envs_per_worker": 3,
+  "num_gpus": 0,
+  "num_sgd_iter": 10,
+  "num_workers": 12,
+  "rollout_fragment_length": 20,
+  "sgd_minibatch_size": 200,
+  "train_batch_size": 8000,
+  "vf_loss_coeff": 0.5
+}
