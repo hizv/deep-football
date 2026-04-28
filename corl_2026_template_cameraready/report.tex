@@ -1,0 +1,142 @@
+\documentclass{article}
+
+\usepackage[final]{corl_2026} % Use final for camera-ready version
+
+\title{Rocket Is All You League: Multi-Agent Soccer Training with LSTM+PPO and Reward Shaping}
+
+\author{
+  Nandan Parikh \\
+  Himanish Agrawal \\
+  Georgia Institute of Technology \\
+  \texttt{nparikh44@gatech.edu, hagarwal67@gatech.edu} \\
+}
+
+\begin{document}
+\maketitle
+
+%===============================================================================
+
+\begin{abstract}
+    We study multi-agent soccer training with PPO-based agents under sparse rewards. Our strongest model, Agent E, combines an LSTM policy trunk with goal-aware potential-based reward shaping (PBRS) to improve temporal credit assignment and stabilize learning. We compare this agent against random-opponent training and self-play, and we also continue to explore an attention-based variant, Agent F. Preliminary results suggest that Agent E learns a more useful attacking policy than self-play, which often remains overly reactive and only attempts to score when already near the goal.
+\end{abstract}
+
+\keywords{Multi-Agent Reinforcement Learning, PPO, LSTM, Reward Shaping, Soccer}
+
+%===============================================================================
+
+\section{Overview}
+This project studies multi-agent soccer training with PPO-based agents under sparse game rewards. Our best-performing agent, Agent E, combines an LSTM policy trunk with goal-aware potential-based reward shaping (PBRS) to improve temporal credit assignment and stabilize learning. We compare Agent E against a random-agent baseline and self-play, and we also include Agent F as an attention-based variant that is still being trained or evaluated. The main empirical observation so far is that self-play encourages short-horizon play: the PPO agent tends to chase immediate ball contact and only attempts a shot when it is already positioned directly in front of the goal, with little evidence of learned defensive structure or purposeful build-up play.
+
+%===============================================================================
+
+\section{Method Description}
+\label{sec:method}
+
+\subsection{Algorithm}
+Agent E uses PPO with a recurrent LSTM policy head. The recurrent state lets the policy integrate information across time, which is important in a partially observed soccer environment where the ball or opponent can temporarily move out of view. The PPO implementation follows the standard clipped objective with generalized advantage estimation.
+
+\subsection{Reward Shaping}
+The reward wrapper implements goal-aware PBRS. The shaping potential is based on the agent's ray-cast distance to the ball and the opposing goal, so the policy gets dense guidance toward ball pursuit and useful field positioning without changing the optimal policy under the shaping framework. A small kick bonus is added for genuine kick events to avoid the pathological behavior where the agent stays glued to the ball.
+
+\subsection{Hyperparameters}
+\begin{table}[h]
+\centering
+\caption{Training hyperparameters for Agent E (LSTM + PPO + PBRS)}
+\label{tab:hyperparams}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Algorithm & PPO \\
+Learning rate & 1e-4 \\
+Batch size & [FILL IN] \\
+Entropy coefficient & 0.01 \\
+Discount factor ($\gamma$) & 0.99 \\
+GAE lambda & 0.95 \\
+Clip parameter & 0.2 \\
+LSTM cell size & 256 \\
+Max sequence length & 20 \\
+Rollout fragment length & 200 \\
+Total timesteps & 8,000,000 \\
+\hline
+\end{tabular}
+\end{table}
+
+%===============================================================================
+
+\section{Preliminary Results}
+\label{sec:results}
+
+\subsection{Training Curves}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{[PATH_TO_TRAINING_CURVE_IMAGE]}
+\caption{Learning curves for Agent E compared with random and self-play baselines, and Agent F if available.}
+\label{fig:training_curves}
+\end{figure}
+
+\subsection{Quantitative Results}
+\begin{table}[h]
+\centering
+\caption{Preliminary performance summary}
+\label{tab:results}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Agent} & \textbf{Final Reward} & \textbf{Steps to Convergence} & \textbf{Win Rate vs Random} \\
+\hline
+Agent E (LSTM + PPO + PBRS) & [FILL IN] & [FILL IN] & [FILL IN]\% \\
+Random baseline & [FILL IN] & N/A & 0\% \\
+Self-play & [FILL IN] & [FILL IN] & [FILL IN]\% \\
+Agent F (Attention) & [FILL IN / IN PROGRESS] & [FILL IN / IN PROGRESS] & [FILL IN / IN PROGRESS]\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{TensorBoard Figures}
+Instead of static gameplay screenshots, attach exported TensorBoard plots here. The most useful figures are the episode reward curve, win rate or goal differential if logged, policy loss, value loss, entropy, and any custom shaping diagnostics. If you want a compact report, one multi-panel figure with reward, loss, and entropy is enough.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{[PATH_TO_TENSORBOARD_REWARD_PLOT]}
+\caption{TensorBoard reward curve for Agent E, compared across baselines if available.}
+\label{fig:tb_reward}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{[PATH_TO_TENSORBOARD_DIAGNOSTIC_PLOT]}
+\caption{Additional training diagnostic such as policy loss, value loss, entropy, or win rate.}
+\label{fig:tb_diagnostic}
+\end{figure}
+
+%===============================================================================
+
+\section{Analysis and Discussion}
+\label{sec:discussion}
+
+Agent E is the strongest model so far because it combines temporal memory with dense shaping feedback. The key question for the final report is whether it achieved higher reward, faster convergence, lower variance, and better win rate than the random and self-play baselines. A plausible explanation is that the LSTM helps the policy preserve short-term context about ball motion and teammate/opponent positioning, while PBRS provides a denser learning signal that reduces the amount of pure exploration required. This section should also explain whether Agent F is on track to match or exceed Agent E.
+
+Possible discussion points to fill in:
+\begin{itemize}
+    \item Why the LSTM helped in partially observed play.
+    \item Why the goal-aware PBRS likely improved exploration and stability.
+  \item Whether self-play produced a weaker attacking strategy than training against a random opponent.
+    \item Whether Agent F is still training, and how its behavior differs from Agent E.
+    \item Any limitations, instability, or reward-shaping side effects.
+\end{itemize}
+
+%===============================================================================
+
+\section{Conclusion}
+\noindent [Brief summary of the main contribution and the current best result. Mention the strongest agent, the baseline comparison, and the next experiment you would run.]
+
+%===============================================================================
+
+\clearpage
+\acknowledgments{[Optional acknowledgments.]}
+
+%===============================================================================
+
+\bibliography{example}
+
+\end{document}

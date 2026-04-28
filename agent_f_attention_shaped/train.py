@@ -100,6 +100,12 @@ def parse_args():
     parser.add_argument("--keep-checkpoints-num", type=int, default=5)
     parser.add_argument("--local-dir", type=str, default=os.path.join(_THIS_DIR, "ray_results"))
     parser.add_argument("--experiment-name", type=str, default="AgentF_GTrXL_GoalAwarePBRS")
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a Ray checkpoint file to restore before continuing training.",
+    )
     return parser.parse_args()
 
 
@@ -150,6 +156,9 @@ if __name__ == "__main__":
     stop_criteria = {"timesteps_total": args.timesteps}
     if args.time_total_s > 0:
         stop_criteria["time_total_s"] = args.time_total_s
+
+    if args.resume_from_checkpoint is not None:
+        print(f"Resuming training from checkpoint: {args.resume_from_checkpoint}")
 
     analysis = tune.run(
         "PPO",
@@ -212,6 +221,7 @@ if __name__ == "__main__":
         checkpoint_at_end=True,
         keep_checkpoints_num=args.keep_checkpoints_num,
         local_dir=args.local_dir,
+        restore=args.resume_from_checkpoint,
     )
 
     best_trial = analysis.get_best_trial("episode_reward_mean", mode="max")

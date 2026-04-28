@@ -35,4 +35,5 @@ python agent_f_attention_shaped/train.py \
     --entropy-coeff 0.01 \
     --base-port $BASE_PORT \
     --local-dir agent_f_attention_shaped/ray_results \
-    --experiment-name AgentF_Attention_GoalAwarePBRS
+    --experiment-name AgentF_Attention_GoalAwarePBRS \
+    --resume-from-checkpoint agent_f_attention_shaped/ray_results/AgentF_Attention_GoalAwarePBRS/PPO_SoccerPBRS_040cb_00000_0_2026-04-27_14-29-24/checkpoint_000075/checkpoint-75
