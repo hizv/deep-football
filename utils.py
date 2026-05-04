@@ -2,6 +2,11 @@ from random import uniform as randfloat
 
 import gym
 from ray.rllib import MultiAgentEnv
+
+from unity_compat import apply_unity_compat
+
+apply_unity_compat()
+
 import soccer_twos
 
 
@@ -22,6 +27,8 @@ def create_rllib_env(env_config: dict = {}):
             - variation: one of soccer_twos.EnvType. Defaults to EnvType.multiagent_player.
             - opponent_policy: a Callable for your agent to train against. Defaults to a random policy.
     """
+    apply_unity_compat()
+
     if hasattr(env_config, "worker_index"):
         env_config["worker_id"] = (
             env_config.worker_index * env_config.get("num_envs_per_worker", 1)

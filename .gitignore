@@ -1,6 +1,6 @@
 envs/
-ray_results/
-ceia_baseline_agent/
+#ray_results/
+#ceia_baseline_agent/
 data/
 *.out
 
@@ -89,6 +89,8 @@ ipython_config.py
 
 # pyenv
 .python-version
+
+.vscode/
 
 # pipenv
 #   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.

@@ -9,7 +9,14 @@ NUM_ENVS_PER_WORKER = 3
 
 
 if __name__ == "__main__":
-    ray.init()
+    ray.init(
+        include_dashboard=True,
+        dashboard_host="127.0.0.1",
+    )
+
+    available_gpus = int(ray.cluster_resources().get("GPU", 0))
+    trainer_gpus = 1 if available_gpus > 0 else 0
+    print(f"Ray detected {available_gpus} GPU(s). Using num_gpus={trainer_gpus}.")
 
     tune.registry.register_env("Soccer", create_rllib_env)
 
@@ -18,7 +25,7 @@ if __name__ == "__main__":
         name="PPO_SP",
         config={
             # system settings
-            "num_gpus": 1,
+            "num_gpus": trainer_gpus,
             "num_workers": 8,
             "num_envs_per_worker": NUM_ENVS_PER_WORKER,
             "log_level": "INFO",
@@ -53,9 +60,12 @@ if __name__ == "__main__":
     # Gets best trial based on max accuracy across all training iterations.
     best_trial = analysis.get_best_trial("episode_reward_mean", mode="max")
     print(best_trial)
-    # Gets best checkpoint for trial based on accuracy.
-    best_checkpoint = analysis.get_best_checkpoint(
-        trial=best_trial, metric="episode_reward_mean", mode="max"
-    )
-    print(best_checkpoint)
+    if best_trial is not None:
+        # Gets best checkpoint for trial based on accuracy.
+        best_checkpoint = analysis.get_best_checkpoint(
+            trial=best_trial, metric="episode_reward_mean", mode="max"
+        )
+        print(best_checkpoint)
+    else:
+        print("No completed trial found. Skipping best checkpoint lookup.")
     print("Done training")
